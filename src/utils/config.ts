@@ -47,6 +47,7 @@ export const BUILTIN_SERVICES = [
     'PERPLEXITY',
     'DEEPSEEK',
     'GITHUB_MODELS',
+    'BEDROCK',
 ] as const;
 export type BuiltinService = (typeof BUILTIN_SERVICES)[number];
 
@@ -673,6 +674,55 @@ const modelConfigParsers: Record<ModelName, Record<string, (value: any) => any>>
         watchMode: generalConfigParsers.watchMode,
         disableLowerCase: generalConfigParsers.disableLowerCase,
     },
+    BEDROCK: {
+        key: (key?: string) => key || '',
+        envKey: (envKey?: string) => (envKey && envKey.length > 0 ? envKey : 'BEDROCK_API_KEY'),
+        model: (model?: string | string[]): string[] => {
+            if (!model) {
+                return ['anthropic.claude-3-5-haiku-20241022-v1:0'];
+            }
+            const modelList = typeof model === 'string' ? model?.split(',') : model;
+            return modelList.map(m => m.trim()).filter(m => !!m && m.length > 0);
+        },
+        runtimeMode: (runtimeMode?: string) => {
+            if (!runtimeMode) {
+                return 'foundation';
+            }
+            const normalized = runtimeMode.toString().trim().toLowerCase();
+            parseAssert(
+                'BEDROCK.runtimeMode',
+                ['foundation', 'application'].includes(normalized),
+                'Must be either "foundation" or "application"'
+            );
+            return normalized;
+        },
+        region: (region?: string) => region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '',
+        profile: (profile?: string) => profile || process.env.AWS_PROFILE || '',
+        accessKeyId: (value?: string) => value || process.env.AWS_ACCESS_KEY_ID || '',
+        secretAccessKey: (value?: string) => value || process.env.AWS_SECRET_ACCESS_KEY || '',
+        sessionToken: (value?: string) => value || process.env.AWS_SESSION_TOKEN || '',
+        applicationEndpointId: (value?: string) => value || process.env.BEDROCK_APPLICATION_ENDPOINT_ID || '',
+        applicationInferenceProfileArn: (value?: string) =>
+            value || process.env.BEDROCK_APPLICATION_INFERENCE_PROFILE_ARN || process.env.BEDROCK_INFERENCE_PROFILE_ARN || '',
+        applicationBaseUrl: (value?: string) => value || process.env.BEDROCK_APPLICATION_BASE_URL || '',
+        systemPrompt: generalConfigParsers.systemPrompt,
+        systemPromptPath: generalConfigParsers.systemPromptPath,
+        codeReviewPromptPath: generalConfigParsers.codeReviewPromptPath,
+        timeout: generalConfigParsers.timeout,
+        temperature: generalConfigParsers.temperature,
+        maxTokens: generalConfigParsers.maxTokens,
+        logging: generalConfigParsers.logging,
+        locale: generalConfigParsers.locale,
+        generate: generalConfigParsers.generate,
+        type: generalConfigParsers.type,
+        maxLength: generalConfigParsers.maxLength,
+        includeBody: generalConfigParsers.includeBody,
+        topP: generalConfigParsers.topP,
+        codeReview: generalConfigParsers.codeReview,
+        disabled: generalConfigParsers.disabled,
+        watchMode: generalConfigParsers.watchMode,
+        disableLowerCase: generalConfigParsers.disableLowerCase,
+    },
 };
 
 export type RawConfig = {
@@ -767,9 +817,23 @@ export const getConfig = async (cliConfig: RawConfig, rawArgv: string[] = []): P
 
     for (const service of services) {
         const configuredEnvKey = (config[service] as Record<string, any>)?.envKey;
-        const envKey = configuredEnvKey || `${service}_API_KEY`;
+        let envKeys: (string | undefined)[];
 
-        const apiKey = process.env[envKey];
+        if (configuredEnvKey) {
+            envKeys = [configuredEnvKey];
+            if (service === 'BEDROCK' && configuredEnvKey !== 'BEDROCK_APPLICATION_API_KEY') {
+                envKeys.push('BEDROCK_APPLICATION_API_KEY');
+            }
+        } else if (service === 'BEDROCK') {
+            envKeys = ['BEDROCK_API_KEY', 'BEDROCK_APPLICATION_API_KEY'];
+        } else {
+            envKeys = [`${service}_API_KEY`];
+        }
+
+        const apiKey = envKeys
+            .map(key => (key ? process.env[key] : undefined))
+            .find((value): value is string => typeof value === 'string' && value.length > 0);
+
         if (apiKey) {
             envConfig[service] = { key: apiKey };
         }
