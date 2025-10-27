@@ -682,7 +682,16 @@ const modelConfigParsers: Record<ModelName, Record<string, (value: any) => any>>
                 return ['anthropic.claude-3-5-haiku-20241022-v1:0'];
             }
             const modelList = typeof model === 'string' ? model?.split(',') : model;
-            return modelList.map(m => m.trim()).filter(m => !!m && m.length > 0);
+            return modelList
+                .map(m => {
+                    const trimmed = m.trim();
+                    // Validate Bedrock model ID format: should contain a dot and typically a colon for version
+                    if (trimmed && !trimmed.includes('.') && !trimmed.includes(':')) {
+                        console.warn(`[Bedrock] Model ID "${trimmed}" may be invalid. Expected format: "provider.model-name-version"`);
+                    }
+                    return trimmed;
+                })
+                .filter(m => !!m && m.length > 0);
         },
         runtimeMode: (runtimeMode?: string) => {
             if (!runtimeMode) {

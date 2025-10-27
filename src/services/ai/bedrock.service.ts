@@ -14,6 +14,15 @@ import { safeJsonParse } from '../../utils/utils.js';
 
 const SERVICE_NAME = 'Bedrock';
 
+const ERROR_NAMES = {
+    MISSING_DEPENDENCY: 'MissingDependencyError',
+    MISSING_REGION: 'MissingRegionError',
+    INVALID_URL: 'InvalidURLError',
+    MISSING_APPLICATION_ENDPOINT: 'MissingApplicationEndpoint',
+    INVALID_RESPONSE: 'InvalidResponseError',
+    EMPTY_RESPONSE: 'EmptyResponseError',
+} as const;
+
 const isNonEmptyString = (value?: string): value is string => typeof value === 'string' && value.length > 0;
 
 type RuntimeMode = 'foundation' | 'application';
@@ -38,7 +47,7 @@ const createMissingDependencyError = (originalError: unknown): AIServiceError =>
     const error: AIServiceError = new Error(
         'Amazon Bedrock support requires "@aws-sdk/client-bedrock-runtime" and "@aws-sdk/credential-providers". Install them with `pnpm add @aws-sdk/client-bedrock-runtime @aws-sdk/credential-providers`.'
     );
-    error.name = 'MissingDependencyError';
+    error.name = ERROR_NAMES.MISSING_DEPENDENCY;
     error.originalError = originalError;
     return error;
 };
@@ -72,8 +81,14 @@ const loadCredentialProvidersModule = async () => {
 };
 
 export class BedrockService extends AIService {
+    private readonly bedrockConfig: BedrockConfig;
+    private credentialCache: AwsCredentialIdentity | AwsCredentialIdentityProvider | undefined = undefined;
+    private credentialCacheTimestamp: number = 0;
+    private readonly CREDENTIAL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
     constructor(protected readonly params: AIServiceParams) {
         super(params);
+        this.bedrockConfig = this.params.config as BedrockConfig;
         this.colors = {
             primary: '#232F3E',
             secondary: '#FF9900',
@@ -139,7 +154,7 @@ export class BedrockService extends AIService {
 
     private async generateMessage(requestType: RequestType): Promise<AIResponse[]> {
         const diff = this.params.stagedDiff.diff;
-        const config = this.params.config as BedrockConfig;
+        const config = this.bedrockConfig;
         const model = config.model;
         const runtimeMode = config.runtimeMode as RuntimeMode;
         const { logging, temperature, topP, maxTokens } = config;
@@ -246,7 +261,7 @@ export class BedrockService extends AIService {
         const region = this.getRegion();
         if (!region) {
             const error: AIServiceError = new Error('AWS region is required to use Bedrock foundation models.');
-            error.name = 'MissingRegionError';
+            error.name = ERROR_NAMES.MISSING_REGION;
             throw error;
         }
 
@@ -254,7 +269,13 @@ export class BedrockService extends AIService {
 
         const { BedrockRuntimeClient, ConverseCommand } = await loadBedrockRuntimeModule();
 
-        const clientConfig: Record<string, unknown> = { region };
+        const config = this.bedrockConfig;
+        const clientConfig: Record<string, unknown> = {
+            region,
+            requestHandler: {
+                requestTimeout: config.timeout || 120000,
+            },
+        };
         const credentials = await this.resolveCredentials();
         if (credentials) {
             clientConfig.credentials = credentials;
@@ -300,12 +321,12 @@ export class BedrockService extends AIService {
         diff: string;
     }): Promise<string> {
         const { model, systemPrompt, userPrompt, inferenceConfig, logging, requestType, diff } = args;
-        const config = this.params.config as BedrockConfig;
+        const config = this.bedrockConfig;
         const urlString = this.buildApplicationUrl();
 
         if (!urlString) {
             const error: AIServiceError = new Error('Application mode requires applicationBaseUrl or region with applicationEndpointId.');
-            error.name = 'MissingApplicationEndpoint';
+            error.name = ERROR_NAMES.MISSING_APPLICATION_ENDPOINT;
             throw error;
         }
 
@@ -365,6 +386,9 @@ export class BedrockService extends AIService {
                         const parsed = safeJsonParse(responseBody);
                         if (!parsed.ok) {
                             // If the response is not valid JSON but status was successful, try to use the raw response
+                            if (logging) {
+                                console.warn(`[Bedrock] Non-JSON response received, attempting text extraction`);
+                            }
                             logAIResponse(diff, requestType, SERVICE_NAME, responseBody, logging);
                             const text = this.extractTextFromStructuredResponse(responseBody) || responseBody;
                             if (text) {
@@ -372,7 +396,7 @@ export class BedrockService extends AIService {
                             }
                             // If we can't extract any text, treat it as an error
                             const error: AIServiceError = new Error('Failed to parse Bedrock application response as JSON.');
-                            error.name = 'InvalidResponseError';
+                            error.name = ERROR_NAMES.INVALID_RESPONSE;
                             error.content = responseBody;
                             logAIError(diff, requestType, SERVICE_NAME, error, logging);
                             return reject(error);
@@ -384,7 +408,7 @@ export class BedrockService extends AIService {
                         const text = this.extractTextFromStructuredResponse(parsedResponse) || '';
                         if (!text) {
                             const error: AIServiceError = new Error('No text content found in Bedrock response.');
-                            error.name = 'EmptyResponseError';
+                            error.name = ERROR_NAMES.EMPTY_RESPONSE;
                             error.content = parsedResponse;
                             logAIError(diff, requestType, SERVICE_NAME, error, logging);
                             return reject(error);
@@ -406,7 +430,7 @@ export class BedrockService extends AIService {
     }
 
     private buildApplicationUrl(): string {
-        const config = this.params.config as BedrockConfig;
+        const config = this.bedrockConfig;
         const baseUrl = config.applicationBaseUrl;
         const region = this.getRegion();
         const endpointId = config.applicationEndpointId;
@@ -420,7 +444,7 @@ export class BedrockService extends AIService {
                 return url.toString();
             } catch (error) {
                 const aiError: AIServiceError = new Error(`Invalid application base URL: ${baseUrl}`);
-                aiError.name = 'InvalidURLError';
+                aiError.name = ERROR_NAMES.INVALID_URL;
                 aiError.originalError = error;
                 throw aiError;
             }
@@ -434,44 +458,57 @@ export class BedrockService extends AIService {
     }
 
     private getRegion(): string {
-        const config = this.params.config as BedrockConfig;
+        const config = this.bedrockConfig;
         return config.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '';
     }
 
     private async resolveCredentials(): Promise<AwsCredentialIdentityProvider | AwsCredentialIdentity | undefined> {
-        const config = this.params.config as BedrockConfig;
+        // Check cache validity
+        const now = Date.now();
+        if (this.credentialCache && now - this.credentialCacheTimestamp < this.CREDENTIAL_CACHE_TTL) {
+            return this.credentialCache;
+        }
+
+        const config = this.bedrockConfig;
         const profile = config.profile;
         const accessKeyId = config.accessKeyId;
         const secretAccessKey = config.secretAccessKey;
         const sessionToken = config.sessionToken;
 
+        let credentials: AwsCredentialIdentityProvider | AwsCredentialIdentity | undefined;
+
         if (isNonEmptyString(profile)) {
             const { fromIni } = await loadCredentialProvidersModule();
-            return fromIni({ profile });
-        }
-
-        if (isNonEmptyString(accessKeyId) && isNonEmptyString(secretAccessKey)) {
-            return async () => ({
+            credentials = fromIni({ profile });
+        } else if (isNonEmptyString(accessKeyId) && isNonEmptyString(secretAccessKey)) {
+            credentials = async () => ({
                 accessKeyId,
                 secretAccessKey,
                 sessionToken: sessionToken || process.env.AWS_SESSION_TOKEN || undefined,
             });
-        }
-
-        if (process.env.AWS_PROFILE && !profile) {
+        } else if (process.env.AWS_PROFILE && !profile) {
             const { fromIni } = await loadCredentialProvidersModule();
-            return fromIni({ profile: process.env.AWS_PROFILE });
-        }
-
-        if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && !isNonEmptyString(accessKeyId)) {
+            credentials = fromIni({ profile: process.env.AWS_PROFILE });
+        } else if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && !isNonEmptyString(accessKeyId)) {
             const { fromEnv } = await loadCredentialProvidersModule();
-            return fromEnv();
+            credentials = fromEnv();
         }
 
-        return undefined;
+        // Update cache
+        if (credentials) {
+            this.credentialCache = credentials;
+            this.credentialCacheTimestamp = now;
+        }
+
+        return credentials;
     }
 
-    private extractTextFromStructuredResponse(response: any): string | null {
+    private extractTextFromStructuredResponse(response: any, depth: number = 0): string | null {
+        // Prevent deep recursion
+        if (depth > 10) {
+            return null;
+        }
+
         if (!response) {
             return null;
         }
@@ -482,7 +519,7 @@ export class BedrockService extends AIService {
 
         if (Array.isArray(response)) {
             const merged = response
-                .map(item => this.extractTextFromStructuredResponse(item))
+                .map(item => this.extractTextFromStructuredResponse(item, depth + 1))
                 .filter(Boolean)
                 .join('\n')
                 .trim();
@@ -500,20 +537,20 @@ export class BedrockService extends AIService {
                 return response.message;
             }
             if (response.message) {
-                const messageContent = this.extractTextFromStructuredResponse(response.message);
+                const messageContent = this.extractTextFromStructuredResponse(response.message, depth + 1);
                 if (messageContent) {
                     return messageContent;
                 }
             }
             if (response.output) {
-                const outputText = this.extractTextFromStructuredResponse(response.output);
+                const outputText = this.extractTextFromStructuredResponse(response.output, depth + 1);
                 if (outputText) {
                     return outputText;
                 }
             }
             if (Array.isArray(response.results)) {
                 const combined = response.results
-                    .map((item: any) => this.extractTextFromStructuredResponse(item))
+                    .map((item: any) => this.extractTextFromStructuredResponse(item, depth + 1))
                     .filter(Boolean)
                     .join('\n')
                     .trim();
@@ -523,7 +560,7 @@ export class BedrockService extends AIService {
             }
             if (Array.isArray(response.content)) {
                 const contentText = response.content
-                    .map((item: any) => this.extractTextFromStructuredResponse(item))
+                    .map((item: any) => this.extractTextFromStructuredResponse(item, depth + 1))
                     .filter(Boolean)
                     .join('\n')
                     .trim();
@@ -533,7 +570,7 @@ export class BedrockService extends AIService {
             }
             if (Array.isArray(response.message?.content)) {
                 const contentText = response.message.content
-                    .map((item: any) => this.extractTextFromStructuredResponse(item))
+                    .map((item: any) => this.extractTextFromStructuredResponse(item, depth + 1))
                     .filter(Boolean)
                     .join('\n')
                     .trim();
@@ -545,7 +582,7 @@ export class BedrockService extends AIService {
                 return response.generation;
             }
             if (response.generations) {
-                const generationsText = this.extractTextFromStructuredResponse(response.generations);
+                const generationsText = this.extractTextFromStructuredResponse(response.generations, depth + 1);
                 if (generationsText) {
                     return generationsText;
                 }
