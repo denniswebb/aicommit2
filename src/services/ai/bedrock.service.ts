@@ -19,6 +19,7 @@ const ERROR_NAMES = {
     MISSING_REGION: 'MissingRegionError',
     INVALID_URL: 'InvalidURLError',
     MISSING_APPLICATION_ENDPOINT: 'MissingApplicationEndpoint',
+    MISSING_APPLICATION_KEY: 'MissingApplicationKeyError',
     INVALID_RESPONSE: 'InvalidResponseError',
     EMPTY_RESPONSE: 'EmptyResponseError',
 } as const;
@@ -327,6 +328,15 @@ export class BedrockService extends AIService {
         if (!urlString) {
             const error: AIServiceError = new Error('Application mode requires applicationBaseUrl or region with applicationEndpointId.');
             error.name = ERROR_NAMES.MISSING_APPLICATION_ENDPOINT;
+            throw error;
+        }
+
+        // Application mode requires an API key for authentication (no IAM signing support)
+        if (!isNonEmptyString(config.key)) {
+            const error: AIServiceError = new Error(
+                'Application mode requires a Bedrock API key. Set BEDROCK.key or BEDROCK_APPLICATION_API_KEY environment variable.'
+            );
+            error.name = ERROR_NAMES.MISSING_APPLICATION_KEY;
             throw error;
         }
 

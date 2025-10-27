@@ -354,6 +354,7 @@ export default testSuite(({ describe }) => {
                         'model=anthropic.claude',
                         'runtimeMode=application',
                         'applicationBaseUrl=https://example.com/invoke',
+                        'key=test-api-key',
                         'codeReview=true',
                         '',
                     ].join('\n')
@@ -417,7 +418,7 @@ export default testSuite(({ describe }) => {
 
                 process.env.AICOMMIT_CONFIG_PATH = configPath;
                 process.env.BEDROCK_APPLICATION_ENDPOINT_ID = 'my-endpoint-123';
-                delete process.env.BEDROCK_API_KEY;
+                process.env.BEDROCK_APPLICATION_API_KEY = 'test-api-key';
                 delete process.env.BEDROCK_APPLICATION_BASE_URL;
 
                 const config = (await getConfig({}, [])) as ValidConfig;

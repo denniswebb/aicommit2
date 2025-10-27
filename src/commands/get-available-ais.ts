@@ -33,11 +33,14 @@ const hasBedrockAccess = (value: RawConfig): boolean => {
         (isNonEmptyString(value.accessKeyId as string) && isNonEmptyString(value.secretAccessKey as string)) ||
         (isNonEmptyString(process.env.AWS_ACCESS_KEY_ID) && isNonEmptyString(process.env.AWS_SECRET_ACCESS_KEY));
 
-    const hasIam = runtimeMode !== 'application' && hasRegion && (hasProfile || hasAccessKeys);
+    // Foundation mode: requires region and IAM credentials (profile or access keys)
+    const hasFoundationAccess = runtimeMode === 'foundation' && hasRegion && (hasProfile || hasAccessKeys);
 
+    // Application mode: REQUIRES an API key (no IAM signing support in application endpoint requests)
     // Check application endpoint config from config or environment variables
-    const hasApplicationEndpointConfig =
+    const hasApplicationAccess =
         runtimeMode === 'application' &&
+        hasApiKey &&
         (isNonEmptyString(value.applicationBaseUrl as string) ||
             isNonEmptyString(value.applicationEndpointId as string) ||
             isNonEmptyString(value.applicationInferenceProfileArn as string) ||
@@ -46,7 +49,7 @@ const hasBedrockAccess = (value: RawConfig): boolean => {
             isNonEmptyString(process.env.BEDROCK_APPLICATION_INFERENCE_PROFILE_ARN) ||
             isNonEmptyString(process.env.BEDROCK_INFERENCE_PROFILE_ARN));
 
-    return hasApiKey || hasIam || hasApplicationEndpointConfig;
+    return hasFoundationAccess || hasApplicationAccess;
 };
 
 export const getAvailableAIs = (config: ValidConfig, requestType: RequestType): ModelName[] => {
