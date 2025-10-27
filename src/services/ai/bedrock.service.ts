@@ -8,6 +8,7 @@ import { fromPromise } from 'rxjs/internal/observable/innerFrom';
 
 import { AIResponse, AIService, AIServiceError, AIServiceParams } from './ai.service.js';
 import { RequestType, logAIComplete, logAIError, logAIPayload, logAIPrompt, logAIRequest, logAIResponse } from '../../utils/ai-log.js';
+import { ModelConfig } from '../../utils/config.js';
 import { DEFAULT_PROMPT_OPTIONS, PromptOptions, codeReviewPrompt, generatePrompt, generateUserPrompt } from '../../utils/prompt.js';
 import { safeJsonParse } from '../../utils/utils.js';
 
@@ -16,6 +17,11 @@ const SERVICE_NAME = 'Bedrock';
 const isNonEmptyString = (value?: string): value is string => typeof value === 'string' && value.length > 0;
 
 type RuntimeMode = 'foundation' | 'application';
+
+// Type-safe config interface derived from the config parsers
+type BedrockConfig = ModelConfig<'BEDROCK'> & {
+    model: string; // Single model for the current invocation
+};
 
 type AwsCredentialIdentity = {
     accessKeyId: string;
@@ -133,9 +139,9 @@ export class BedrockService extends AIService {
 
     private async generateMessage(requestType: RequestType): Promise<AIResponse[]> {
         const diff = this.params.stagedDiff.diff;
-        const config = this.params.config as Record<string, any>;
-        const model = config.model as string;
-        const runtimeMode = (config.runtimeMode as RuntimeMode) || 'foundation';
+        const config = this.params.config as BedrockConfig;
+        const model = config.model;
+        const runtimeMode = config.runtimeMode as RuntimeMode;
         const { logging, temperature, topP, maxTokens } = config;
 
         const promptOptions: PromptOptions = {
@@ -152,6 +158,7 @@ export class BedrockService extends AIService {
         const generatedSystemPrompt = requestType === 'review' ? codeReviewPrompt(promptOptions) : generatePrompt(promptOptions);
         const userPrompt = generateUserPrompt(diff, requestType);
 
+        // SECURITY: Ensure credentials are never logged - only configuration metadata
         const loggingHeaders: Record<string, unknown> =
             runtimeMode === 'foundation'
                 ? {
@@ -293,7 +300,7 @@ export class BedrockService extends AIService {
         diff: string;
     }): Promise<string> {
         const { model, systemPrompt, userPrompt, inferenceConfig, logging, requestType, diff } = args;
-        const config = this.params.config as Record<string, any>;
+        const config = this.params.config as BedrockConfig;
         const urlString = this.buildApplicationUrl();
 
         if (!urlString) {
@@ -356,10 +363,32 @@ export class BedrockService extends AIService {
                         }
 
                         const parsed = safeJsonParse(responseBody);
-                        const parsedResponse = parsed.ok ? parsed.data : responseBody;
+                        if (!parsed.ok) {
+                            // If the response is not valid JSON but status was successful, try to use the raw response
+                            logAIResponse(diff, requestType, SERVICE_NAME, responseBody, logging);
+                            const text = this.extractTextFromStructuredResponse(responseBody) || responseBody;
+                            if (text) {
+                                return resolve(text);
+                            }
+                            // If we can't extract any text, treat it as an error
+                            const error: AIServiceError = new Error('Failed to parse Bedrock application response as JSON.');
+                            error.name = 'InvalidResponseError';
+                            error.content = responseBody;
+                            logAIError(diff, requestType, SERVICE_NAME, error, logging);
+                            return reject(error);
+                        }
+
+                        const parsedResponse = parsed.data;
                         logAIResponse(diff, requestType, SERVICE_NAME, parsedResponse, logging);
 
-                        const text = this.extractTextFromStructuredResponse(parsedResponse) || responseBody;
+                        const text = this.extractTextFromStructuredResponse(parsedResponse) || '';
+                        if (!text) {
+                            const error: AIServiceError = new Error('No text content found in Bedrock response.');
+                            error.name = 'EmptyResponseError';
+                            error.content = parsedResponse;
+                            logAIError(diff, requestType, SERVICE_NAME, error, logging);
+                            return reject(error);
+                        }
                         resolve(text);
                     });
                 }
@@ -377,10 +406,10 @@ export class BedrockService extends AIService {
     }
 
     private buildApplicationUrl(): string {
-        const config = this.params.config as Record<string, any>;
-        const baseUrl = config.applicationBaseUrl as string | undefined;
+        const config = this.params.config as BedrockConfig;
+        const baseUrl = config.applicationBaseUrl;
         const region = this.getRegion();
-        const endpointId = config.applicationEndpointId as string | undefined;
+        const endpointId = config.applicationEndpointId;
 
         if (baseUrl) {
             try {
@@ -390,7 +419,10 @@ export class BedrockService extends AIService {
                 }
                 return url.toString();
             } catch (error) {
-                return baseUrl;
+                const aiError: AIServiceError = new Error(`Invalid application base URL: ${baseUrl}`);
+                aiError.name = 'InvalidURLError';
+                aiError.originalError = error;
+                throw aiError;
             }
         }
 
@@ -402,16 +434,16 @@ export class BedrockService extends AIService {
     }
 
     private getRegion(): string {
-        const config = this.params.config as Record<string, any>;
-        return (config.region as string | undefined) || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '';
+        const config = this.params.config as BedrockConfig;
+        return config.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '';
     }
 
     private async resolveCredentials(): Promise<AwsCredentialIdentityProvider | AwsCredentialIdentity | undefined> {
-        const config = this.params.config as Record<string, any>;
-        const profile = config.profile as string | undefined;
-        const accessKeyId = config.accessKeyId as string | undefined;
-        const secretAccessKey = config.secretAccessKey as string | undefined;
-        const sessionToken = config.sessionToken as string | undefined;
+        const config = this.params.config as BedrockConfig;
+        const profile = config.profile;
+        const accessKeyId = config.accessKeyId;
+        const secretAccessKey = config.secretAccessKey;
+        const sessionToken = config.sessionToken;
 
         if (isNonEmptyString(profile)) {
             const { fromIni } = await loadCredentialProvidersModule();

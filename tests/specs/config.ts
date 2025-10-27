@@ -376,6 +376,90 @@ export default testSuite(({ describe }) => {
                 await fixture.rm();
                 restoreEnv(snapshot);
             });
+
+            await test('considers Bedrock available with AWS_PROFILE environment variable', async () => {
+                const { fixture } = await createFixture();
+                const configPath = path.join(fixture.path, '.config', 'aicommit2', 'config.ini');
+                await ensureDirectoryExists(path.dirname(configPath));
+                await fs.writeFile(configPath, ['[BEDROCK]', 'model=anthropic.claude-3', 'codeReview=true', ''].join('\n'));
+
+                const snapshot = snapshotEnv(envKeys);
+
+                process.env.AICOMMIT_CONFIG_PATH = configPath;
+                process.env.AWS_REGION = 'eu-west-1';
+                process.env.AWS_PROFILE = 'my-profile';
+                delete process.env.AWS_ACCESS_KEY_ID;
+                delete process.env.AWS_SECRET_ACCESS_KEY;
+                delete process.env.BEDROCK_API_KEY;
+
+                const config = (await getConfig({}, [])) as ValidConfig;
+
+                const commitAIs = getAvailableAIs(config, 'commit');
+                const reviewAIs = getAvailableAIs(config, 'review');
+
+                expect(commitAIs).toContain('BEDROCK');
+                expect(reviewAIs).toContain('BEDROCK');
+
+                await fixture.rm();
+                restoreEnv(snapshot);
+            });
+
+            await test('considers Bedrock available with application endpoint environment variables', async () => {
+                const { fixture } = await createFixture();
+                const configPath = path.join(fixture.path, '.config', 'aicommit2', 'config.ini');
+                await ensureDirectoryExists(path.dirname(configPath));
+                await fs.writeFile(
+                    configPath,
+                    ['[BEDROCK]', 'model=anthropic.claude-3', 'runtimeMode=application', 'codeReview=true', ''].join('\n')
+                );
+
+                const snapshot = snapshotEnv(envKeys);
+
+                process.env.AICOMMIT_CONFIG_PATH = configPath;
+                process.env.BEDROCK_APPLICATION_ENDPOINT_ID = 'my-endpoint-123';
+                delete process.env.BEDROCK_API_KEY;
+                delete process.env.BEDROCK_APPLICATION_BASE_URL;
+
+                const config = (await getConfig({}, [])) as ValidConfig;
+
+                const commitAIs = getAvailableAIs(config, 'commit');
+                const reviewAIs = getAvailableAIs(config, 'review');
+
+                expect(commitAIs).toContain('BEDROCK');
+                expect(reviewAIs).toContain('BEDROCK');
+
+                await fixture.rm();
+                restoreEnv(snapshot);
+            });
+
+            await test('does not consider Bedrock available without credentials or endpoints', async () => {
+                const { fixture } = await createFixture();
+                const configPath = path.join(fixture.path, '.config', 'aicommit2', 'config.ini');
+                await ensureDirectoryExists(path.dirname(configPath));
+                await fs.writeFile(configPath, ['[BEDROCK]', 'model=anthropic.claude-3', ''].join('\n'));
+
+                const snapshot = snapshotEnv(envKeys);
+
+                process.env.AICOMMIT_CONFIG_PATH = configPath;
+                delete process.env.AWS_REGION;
+                delete process.env.AWS_DEFAULT_REGION;
+                delete process.env.AWS_ACCESS_KEY_ID;
+                delete process.env.AWS_SECRET_ACCESS_KEY;
+                delete process.env.AWS_PROFILE;
+                delete process.env.BEDROCK_API_KEY;
+                delete process.env.BEDROCK_APPLICATION_API_KEY;
+                delete process.env.BEDROCK_APPLICATION_BASE_URL;
+                delete process.env.BEDROCK_APPLICATION_ENDPOINT_ID;
+
+                const config = (await getConfig({}, [])) as ValidConfig;
+
+                const commitAIs = getAvailableAIs(config, 'commit');
+
+                expect(commitAIs).not.toContain('BEDROCK');
+
+                await fixture.rm();
+                restoreEnv(snapshot);
+            });
         });
     });
 });

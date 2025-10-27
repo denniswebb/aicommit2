@@ -18,16 +18,33 @@ const hasBedrockAccess = (value: RawConfig): boolean => {
         : 'foundation';
 
     const hasApiKey = isNonEmptyString(value.key as string);
-    const hasRegion = isNonEmptyString(value.region as string);
-    const hasProfile = isNonEmptyString(value.profile as string);
-    const hasAccessKeys = isNonEmptyString(value.accessKeyId as string) && isNonEmptyString(value.secretAccessKey as string);
+
+    // Check region from config or environment variables (matching bedrock.service.ts getRegion())
+    const hasRegion =
+        isNonEmptyString(value.region as string) ||
+        isNonEmptyString(process.env.AWS_REGION) ||
+        isNonEmptyString(process.env.AWS_DEFAULT_REGION);
+
+    // Check profile from config or environment variable
+    const hasProfile = isNonEmptyString(value.profile as string) || isNonEmptyString(process.env.AWS_PROFILE);
+
+    // Check access keys from config or environment variables
+    const hasAccessKeys =
+        (isNonEmptyString(value.accessKeyId as string) && isNonEmptyString(value.secretAccessKey as string)) ||
+        (isNonEmptyString(process.env.AWS_ACCESS_KEY_ID) && isNonEmptyString(process.env.AWS_SECRET_ACCESS_KEY));
 
     const hasIam = runtimeMode !== 'application' && hasRegion && (hasProfile || hasAccessKeys);
+
+    // Check application endpoint config from config or environment variables
     const hasApplicationEndpointConfig =
         runtimeMode === 'application' &&
         (isNonEmptyString(value.applicationBaseUrl as string) ||
             isNonEmptyString(value.applicationEndpointId as string) ||
-            isNonEmptyString(value.applicationInferenceProfileArn as string));
+            isNonEmptyString(value.applicationInferenceProfileArn as string) ||
+            isNonEmptyString(process.env.BEDROCK_APPLICATION_BASE_URL) ||
+            isNonEmptyString(process.env.BEDROCK_APPLICATION_ENDPOINT_ID) ||
+            isNonEmptyString(process.env.BEDROCK_APPLICATION_INFERENCE_PROFILE_ARN) ||
+            isNonEmptyString(process.env.BEDROCK_INFERENCE_PROFILE_ARN));
 
     return hasApiKey || hasIam || hasApplicationEndpointConfig;
 };
