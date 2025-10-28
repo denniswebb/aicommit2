@@ -182,8 +182,10 @@ For the complete list of available models, visit the [AWS Bedrock Model IDs docu
 
 **Solution**:
 - Some Claude models (particularly via Application Inference Profiles) don't support both `temperature` and `topP` simultaneously
-- The aicommit2 Bedrock integration now only sends `temperature` by default
-- If you need to use `topP` instead, you may need to adjust your configuration or model selection
+- **Important**: In application mode, the aicommit2 Bedrock integration intentionally excludes `topP` from requests and only sends `temperature` to avoid this error
+- Foundation mode includes both parameters, which works with most foundation models
+- This is a known limitation of certain Bedrock Application Inference Profiles and is handled automatically by the integration
+- If you need precise control over `topP`, consider using foundation mode instead of application mode
 
 ### Configuration Issues
 

@@ -41,8 +41,19 @@ type AwsCredentialIdentity = {
 
 type AwsCredentialIdentityProvider = () => Promise<AwsCredentialIdentity>;
 
-let bedrockRuntimeModule: any | null = null;
-let credentialProvidersModule: any | null = null;
+// Type definitions for lazily-loaded AWS SDK modules
+type BedrockRuntimeModule = {
+    BedrockRuntimeClient: any;
+    ConverseCommand: any;
+};
+
+type CredentialProvidersModule = {
+    fromIni: (options: { profile?: string }) => AwsCredentialIdentityProvider;
+};
+
+// Module-level cache for lazily-loaded AWS SDK modules to avoid repeated dynamic imports
+let bedrockRuntimeModule: BedrockRuntimeModule | null = null;
+let credentialProvidersModule: CredentialProvidersModule | null = null;
 
 const createMissingDependencyError = (originalError: unknown): AIServiceError => {
     const error: AIServiceError = new Error(
@@ -53,13 +64,14 @@ const createMissingDependencyError = (originalError: unknown): AIServiceError =>
     return error;
 };
 
-const loadBedrockRuntimeModule = async () => {
+const loadBedrockRuntimeModule = async (): Promise<BedrockRuntimeModule> => {
     if (bedrockRuntimeModule) {
         return bedrockRuntimeModule;
     }
 
     try {
-        bedrockRuntimeModule = await import('@aws-sdk/client-bedrock-runtime');
+        const module = await import('@aws-sdk/client-bedrock-runtime');
+        bedrockRuntimeModule = module as BedrockRuntimeModule;
         return bedrockRuntimeModule;
     } catch (error) {
         bedrockRuntimeModule = null;
@@ -67,13 +79,14 @@ const loadBedrockRuntimeModule = async () => {
     }
 };
 
-const loadCredentialProvidersModule = async () => {
+const loadCredentialProvidersModule = async (): Promise<CredentialProvidersModule> => {
     if (credentialProvidersModule) {
         return credentialProvidersModule;
     }
 
     try {
-        credentialProvidersModule = await import('@aws-sdk/credential-providers');
+        const module = await import('@aws-sdk/credential-providers');
+        credentialProvidersModule = module as CredentialProvidersModule;
         return credentialProvidersModule;
     } catch (error) {
         credentialProvidersModule = null;
@@ -96,6 +109,37 @@ export class BedrockService extends AIService {
         };
         this.serviceName = chalk.bgHex(this.colors.primary).hex(this.colors.secondary).bold(`[${SERVICE_NAME}]`);
         this.errorPrefix = chalk.red.bold(`[${SERVICE_NAME}]`);
+
+        // Validate configuration early to fail fast
+        this.validateConfiguration();
+    }
+
+    private validateConfiguration(): void {
+        const config = this.bedrockConfig;
+        const runtimeMode = config.runtimeMode as RuntimeMode;
+
+        // Validate application mode has an API key
+        if (runtimeMode === 'application' && !isNonEmptyString(config.key)) {
+            const error: AIServiceError = new Error(
+                'Application mode requires a Bedrock API key. Set BEDROCK.key or BEDROCK_APPLICATION_API_KEY environment variable.'
+            );
+            error.name = ERROR_NAMES.MISSING_APPLICATION_KEY;
+            throw error;
+        }
+
+        // Validate region is set for foundation mode
+        if (runtimeMode === 'foundation' && !this.getRegion()) {
+            const error: AIServiceError = new Error('AWS region is required to use Bedrock foundation models.');
+            error.name = ERROR_NAMES.MISSING_REGION;
+            throw error;
+        }
+
+        // Validate application mode has necessary endpoint configuration
+        if (runtimeMode === 'application' && !this.buildApplicationUrl(config.model)) {
+            const error: AIServiceError = new Error('Application mode requires applicationBaseUrl or region with applicationEndpointId.');
+            error.name = ERROR_NAMES.MISSING_APPLICATION_ENDPOINT;
+            throw error;
+        }
     }
 
     protected getServiceSpecificErrorMessage(error: AIServiceError): string | null {
@@ -259,13 +303,8 @@ export class BedrockService extends AIService {
         requestType: RequestType;
         diff: string;
     }): Promise<string> {
+        // Region validation is done in constructor, so we can safely use it here
         const region = this.getRegion();
-        if (!region) {
-            const error: AIServiceError = new Error('AWS region is required to use Bedrock foundation models.');
-            error.name = ERROR_NAMES.MISSING_REGION;
-            throw error;
-        }
-
         const { model, systemPrompt, userPrompt, inferenceConfig, logging, requestType, diff } = args;
 
         const { BedrockRuntimeClient, ConverseCommand } = await loadBedrockRuntimeModule();
@@ -323,23 +362,9 @@ export class BedrockService extends AIService {
     }): Promise<string> {
         const { model, systemPrompt, userPrompt, inferenceConfig, logging, requestType, diff } = args;
         const config = this.bedrockConfig;
-        const urlString = this.buildApplicationUrl(model);
 
-        if (!urlString) {
-            const error: AIServiceError = new Error('Application mode requires applicationBaseUrl or region with applicationEndpointId.');
-            error.name = ERROR_NAMES.MISSING_APPLICATION_ENDPOINT;
-            throw error;
-        }
-
-        // Application mode requires an API key for authentication (no IAM signing support)
-        if (!isNonEmptyString(config.key)) {
-            const error: AIServiceError = new Error(
-                'Application mode requires a Bedrock API key. Set BEDROCK.key or BEDROCK_APPLICATION_API_KEY environment variable.'
-            );
-            error.name = ERROR_NAMES.MISSING_APPLICATION_KEY;
-            throw error;
-        }
-
+        // Validation is done in constructor, so we can safely use the URL here
+        const urlString = this.buildApplicationUrl(model)!; // Non-null assertion safe due to constructor validation
         const url = new URL(urlString);
 
         // Use Bedrock Converse API format
@@ -410,19 +435,12 @@ export class BedrockService extends AIService {
                             return reject(error);
                         }
 
+                        // Bedrock Converse API should always return JSON-formatted responses
                         const parsed = safeJsonParse(responseBody);
                         if (!parsed.ok) {
-                            // If the response is not valid JSON but status was successful, try to use the raw response
-                            if (logging) {
-                                console.warn(`[Bedrock] Non-JSON response received, attempting text extraction`);
-                            }
-                            logAIResponse(diff, requestType, SERVICE_NAME, responseBody, logging);
-                            const text = this.extractTextFromStructuredResponse(responseBody) || responseBody;
-                            if (text) {
-                                return resolve(text);
-                            }
-                            // If we can't extract any text, treat it as an error
-                            const error: AIServiceError = new Error('Failed to parse Bedrock application response as JSON.');
+                            const error: AIServiceError = new Error(
+                                'Failed to parse Bedrock application response as JSON. The Bedrock Converse API should always return valid JSON.'
+                            );
                             error.name = ERROR_NAMES.INVALID_RESPONSE;
                             error.content = responseBody;
                             logAIError(diff, requestType, SERVICE_NAME, error, logging);

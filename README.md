@@ -1,5 +1,4 @@
 <div align="center">
-
   <div>
     <img src="https://github.com/tak-bro/aicommit2/blob/main/img/demo-min.gif?raw=true" alt="AICommit2"/>
     <h1 align="center">AICommit2</h1>
@@ -23,7 +22,6 @@ ______________________________________________________________________
 
 ## 🚀 Quick Start
 
-What!
 ```bash
 # Install globally
 npm install -g aicommit2
