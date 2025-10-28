@@ -433,6 +433,42 @@ export default testSuite(({ describe }) => {
                 restoreEnv(snapshot);
             });
 
+            await test('considers Bedrock available with application mode using region and API key only', async () => {
+                const { fixture } = await createFixture();
+                const configPath = path.join(fixture.path, '.config', 'aicommit2', 'config.ini');
+                await ensureDirectoryExists(path.dirname(configPath));
+                await fs.writeFile(
+                    configPath,
+                    [
+                        '[BEDROCK]',
+                        'model=arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123',
+                        'runtimeMode=application',
+                        'region=us-east-1',
+                        'key=test-api-key',
+                        'codeReview=true',
+                        '',
+                    ].join('\n')
+                );
+
+                const snapshot = snapshotEnv(envKeys);
+
+                process.env.AICOMMIT_CONFIG_PATH = configPath;
+                delete process.env.BEDROCK_APPLICATION_BASE_URL;
+                delete process.env.BEDROCK_APPLICATION_ENDPOINT_ID;
+                delete process.env.BEDROCK_APPLICATION_INFERENCE_PROFILE_ARN;
+
+                const config = (await getConfig({}, [])) as ValidConfig;
+
+                const commitAIs = getAvailableAIs(config, 'commit');
+                const reviewAIs = getAvailableAIs(config, 'review');
+
+                expect(commitAIs).toContain('BEDROCK');
+                expect(reviewAIs).toContain('BEDROCK');
+
+                await fixture.rm();
+                restoreEnv(snapshot);
+            });
+
             await test('does not consider Bedrock available without credentials or endpoints', async () => {
                 const { fixture } = await createFixture();
                 const configPath = path.join(fixture.path, '.config', 'aicommit2', 'config.ini');

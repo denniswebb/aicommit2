@@ -30,7 +30,27 @@ export AWS_REGION="us-west-2"
 aicommit2 config set BEDROCK.profile=your-profile
 ```
 
-### Application Endpoint Runtime
+### Application Endpoint Runtime (Application Inference Profiles)
+
+For Application Inference Profiles, use the simplified configuration with just region and API key:
+
+```sh
+aicommit2 config set BEDROCK.runtimeMode=application \
+    BEDROCK.model="arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123" \
+    BEDROCK.region="us-east-1" \
+    BEDROCK.key="your-api-key" \
+    BEDROCK.codeReview=true
+```
+
+Or set the API key via environment variable:
+
+```sh
+export BEDROCK_APPLICATION_API_KEY="your-application-api-key"
+```
+
+### Application Endpoint Runtime (Custom Endpoints)
+
+For custom application endpoints, specify the base URL and endpoint ID:
 
 ```sh
 aicommit2 config set BEDROCK.runtimeMode=application \
@@ -40,7 +60,7 @@ aicommit2 config set BEDROCK.runtimeMode=application \
     BEDROCK.codeReview=true
 ```
 
-Set the application API key (falls back automatically if `BEDROCK_API_KEY` is not present):
+Set the application API key:
 
 ```sh
 export BEDROCK_APPLICATION_API_KEY="your-application-api-key"
@@ -105,9 +125,12 @@ For the complete list of available models, visit the [AWS Bedrock Model IDs docu
 ## Tips
 
 - Set `BEDROCK.runtimeMode=foundation` when you rely on IAM credentials or AWS profiles. The CLI automatically checks IAM-related environment variables and does not require an API key when they are present.
-- Switch to `BEDROCK.runtimeMode=application` for Bedrock applications or agents. Provide an application API key and either a base URL or endpoint/inference profile identifiers.
+- Switch to `BEDROCK.runtimeMode=application` for Bedrock Application Inference Profiles or custom application endpoints:
+  - For Application Inference Profiles: Just set the model ARN, region, and API key (no additional endpoint configuration needed)
+  - For custom endpoints: Provide an application API key and either a base URL or endpoint/inference profile identifiers
 - The CLI logs every request/response via `~/.local/state/aicommit2/logs` when `logging=true` to help diagnose AWS-specific errors.
 - Combine multiple Bedrock models by comma separating `BEDROCK.model` values.
+- When using Application Inference Profiles, use the full ARN as the model ID (e.g., `arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123`)
 
 ## Troubleshooting
 
@@ -155,14 +178,22 @@ For the complete list of available models, visit the [AWS Bedrock Model IDs docu
 - Verify inference parameters (`temperature`, `topP`, `maxTokens`) are within valid ranges for your model
 - Some models have specific requirements - consult the model documentation
 
+**Problem**: `ValidationException` - "`temperature` and `top_p` cannot both be specified for this model"
+
+**Solution**:
+- Some Claude models (particularly via Application Inference Profiles) don't support both `temperature` and `topP` simultaneously
+- The aicommit2 Bedrock integration now only sends `temperature` by default
+- If you need to use `topP` instead, you may need to adjust your configuration or model selection
+
 ### Configuration Issues
 
 **Problem**: Bedrock provider not appearing in available AIs
 
 **Solution**:
 - Ensure you have configured at least one of:
-  - IAM credentials: Set `AWS_REGION` + (`AWS_ACCESS_KEY_ID` & `AWS_SECRET_ACCESS_KEY` OR `AWS_PROFILE`)
-  - Application endpoint: Set `BEDROCK.applicationBaseUrl` or `BEDROCK.applicationEndpointId`
+  - IAM credentials (foundation mode): Set `AWS_REGION` + (`AWS_ACCESS_KEY_ID` & `AWS_SECRET_ACCESS_KEY` OR `AWS_PROFILE`)
+  - Application Inference Profile (application mode): Set `BEDROCK.region` + `BEDROCK.key` (or `BEDROCK_APPLICATION_API_KEY`)
+  - Custom application endpoint: Set `BEDROCK.applicationBaseUrl` or `BEDROCK.applicationEndpointId` + `BEDROCK.key`
 - Verify you have a model configured: `aicommit2 config get BEDROCK.model`
 - For code reviews, ensure `BEDROCK.codeReview=true`
 

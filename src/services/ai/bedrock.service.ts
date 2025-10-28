@@ -191,7 +191,7 @@ export class BedrockService extends AIService {
         const loggingUrl =
             runtimeMode === 'foundation'
                 ? `https://bedrock-runtime.${this.getRegion() || 'unknown'}.amazonaws.com/model/${encodeURIComponent(model)}`
-                : this.buildApplicationUrl();
+                : this.buildApplicationUrl(model);
 
         logAIRequest(diff, requestType, SERVICE_NAME, model, loggingUrl, loggingHeaders, logging);
         logAIPrompt(diff, requestType, SERVICE_NAME, generatedSystemPrompt, userPrompt, logging);
@@ -323,7 +323,7 @@ export class BedrockService extends AIService {
     }): Promise<string> {
         const { model, systemPrompt, userPrompt, inferenceConfig, logging, requestType, diff } = args;
         const config = this.bedrockConfig;
-        const urlString = this.buildApplicationUrl();
+        const urlString = this.buildApplicationUrl(model);
 
         if (!urlString) {
             const error: AIServiceError = new Error('Application mode requires applicationBaseUrl or region with applicationEndpointId.');
@@ -342,12 +342,28 @@ export class BedrockService extends AIService {
 
         const url = new URL(urlString);
 
-        const requestBody = {
+        // Use Bedrock Converse API format
+        const requestBody: any = {
             modelId: model,
-            systemPrompt,
-            userPrompt,
-            inferenceConfig,
+            messages: [
+                {
+                    role: 'user',
+                    content: [{ text: userPrompt }],
+                },
+            ],
+            inferenceConfig: {
+                // Only include temperature OR topP, not both (some models don't support both)
+                ...(typeof inferenceConfig.temperature === 'number' && { temperature: inferenceConfig.temperature }),
+                // ...(typeof inferenceConfig.topP === 'number' && { topP: inferenceConfig.topP }),
+                ...(typeof inferenceConfig.maxTokens === 'number' && { maxTokens: inferenceConfig.maxTokens }),
+            },
         };
+
+        // Add system prompt if provided
+        if (systemPrompt) {
+            requestBody.system = [{ text: systemPrompt }];
+        }
+
         const body = JSON.stringify(requestBody);
 
         const headers: Record<string, string> = {
@@ -355,8 +371,9 @@ export class BedrockService extends AIService {
             'Content-Length': Buffer.byteLength(body).toString(),
         };
 
+        // Use Authorization Bearer token for authentication
         if (isNonEmptyString(config.key)) {
-            headers['x-amzn-bedrock-application-key'] = config.key;
+            headers['Authorization'] = `Bearer ${config.key}`;
         }
         if (isNonEmptyString(config.applicationInferenceProfileArn)) {
             headers['x-amzn-bedrock-inference-profile-arn'] = config.applicationInferenceProfileArn;
@@ -439,18 +456,14 @@ export class BedrockService extends AIService {
         });
     }
 
-    private buildApplicationUrl(): string {
+    private buildApplicationUrl(model: string): string {
         const config = this.bedrockConfig;
         const baseUrl = config.applicationBaseUrl;
         const region = this.getRegion();
-        const endpointId = config.applicationEndpointId;
 
         if (baseUrl) {
             try {
                 const url = new URL(baseUrl);
-                if (endpointId && !url.pathname.includes(endpointId)) {
-                    url.pathname = `${url.pathname.replace(/\/$/, '')}/${endpointId}`;
-                }
                 return url.toString();
             } catch (error) {
                 const aiError: AIServiceError = new Error(`Invalid application base URL: ${baseUrl}`);
@@ -460,8 +473,10 @@ export class BedrockService extends AIService {
             }
         }
 
-        if (region && endpointId) {
-            return `https://bedrock-runtime.${region}.amazonaws.com/model-inference/${endpointId}`;
+        // Default to Converse API endpoint: /model/{modelId}/converse
+        if (region && model) {
+            const encodedModelId = encodeURIComponent(model);
+            return `https://bedrock-runtime.${region}.amazonaws.com/model/${encodedModelId}/converse`;
         }
 
         return '';

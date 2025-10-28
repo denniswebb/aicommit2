@@ -36,12 +36,13 @@ const hasBedrockAccess = (value: RawConfig): boolean => {
     // Foundation mode: requires region and IAM credentials (profile or access keys)
     const hasFoundationAccess = runtimeMode === 'foundation' && hasRegion && (hasProfile || hasAccessKeys);
 
-    // Application mode: REQUIRES an API key (no IAM signing support in application endpoint requests)
-    // Check application endpoint config from config or environment variables
+    // Application mode: REQUIRES an API key and region
+    // If no specific application endpoint config is provided, will default to Converse API endpoint
     const hasApplicationAccess =
         runtimeMode === 'application' &&
         hasApiKey &&
-        (isNonEmptyString(value.applicationBaseUrl as string) ||
+        (hasRegion ||
+            isNonEmptyString(value.applicationBaseUrl as string) ||
             isNonEmptyString(value.applicationEndpointId as string) ||
             isNonEmptyString(value.applicationInferenceProfileArn as string) ||
             isNonEmptyString(process.env.BEDROCK_APPLICATION_BASE_URL) ||
