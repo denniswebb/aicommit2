@@ -679,31 +679,47 @@ const modelConfigParsers: Record<ModelName, Record<string, (value: any) => any>>
         envKey: (envKey?: string) => (envKey && envKey.length > 0 ? envKey : 'BEDROCK_API_KEY'),
         model: (model?: string | string[]): string[] => {
             if (!model) {
-                return ['anthropic.claude-3-5-haiku-20241022-v1:0'];
+                return ['anthropic.claude-haiku-4-5-20251001-v1:0'];
             }
             const modelList = typeof model === 'string' ? model?.split(',') : model;
             return modelList
                 .map(m => {
                     const trimmed = m.trim();
-                    // Validate Bedrock model ID format: should contain a dot and typically a colon for version
+                    // Validate Bedrock model ID format: should contain a dot or be an ARN
                     if (trimmed && !trimmed.includes('.') && !trimmed.includes(':')) {
-                        console.warn(`[Bedrock] Model ID "${trimmed}" may be invalid. Expected format: "provider.model-name-version"`);
+                        console.warn(
+                            `[Bedrock] Model ID "${trimmed}" may be invalid. Expected format: "provider.model-name-version" or ARN`
+                        );
                     }
                     return trimmed;
                 })
                 .filter(m => !!m && m.length > 0);
         },
-        runtimeMode: (runtimeMode?: string) => {
-            if (!runtimeMode) {
-                return 'foundation';
+        runtimeMode: (runtimeMode?: string, context?: { model?: string | string[] }) => {
+            // If explicitly set, validate and use it
+            if (runtimeMode) {
+                const normalized = runtimeMode.toString().trim().toLowerCase();
+                parseAssert(
+                    'BEDROCK.runtimeMode',
+                    ['foundation', 'application'].includes(normalized),
+                    'Must be either "foundation" or "application"'
+                );
+                return normalized;
             }
-            const normalized = runtimeMode.toString().trim().toLowerCase();
-            parseAssert(
-                'BEDROCK.runtimeMode',
-                ['foundation', 'application'].includes(normalized),
-                'Must be either "foundation" or "application"'
-            );
-            return normalized;
+
+            // Auto-detect from model string if not specified
+            const modelValue = context?.model;
+            if (modelValue) {
+                const modelList = typeof modelValue === 'string' ? [modelValue] : modelValue;
+                // Check if any model contains "application-inference-profile"
+                const hasApplicationProfile = modelList.some(m => m.includes('application-inference-profile'));
+                if (hasApplicationProfile) {
+                    return 'application';
+                }
+            }
+
+            // Default to foundation mode
+            return 'foundation';
         },
         region: (region?: string) => region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '',
         profile: (profile?: string) => profile || process.env.AWS_PROFILE || '',
@@ -869,7 +885,14 @@ export const getConfig = async (cliConfig: RawConfig, rawArgv: string[] = []): P
 
         for (const [key, parser] of Object.entries(modelParsers)) {
             const value = getValueWithPriority(modelName, key);
-            (parsedConfig[modelName] as Record<string, any>)[key] = (parser as any)(value); // Add type assertion
+
+            // Special handling for BEDROCK runtimeMode: pass model as context for auto-detection
+            if (modelName === 'BEDROCK' && key === 'runtimeMode') {
+                const modelValue = getValueWithPriority(modelName, 'model');
+                (parsedConfig[modelName] as Record<string, any>)[key] = (parser as any)(value, { model: modelValue });
+            } else {
+                (parsedConfig[modelName] as Record<string, any>)[key] = (parser as any)(value);
+            }
         }
     }
 
@@ -903,7 +926,14 @@ export const setConfigs = async (keyValues: [key: string, value: any][]) => {
             if (!parser) {
                 throw new KnownError(`Invalid config property: ${key}`);
             }
-            (config[modelName] as Record<string, any>)[modelKey] = (parser as any)(value);
+
+            // Special handling for BEDROCK runtimeMode: pass model as context for auto-detection
+            if (modelName === 'BEDROCK' && modelKey === 'runtimeMode') {
+                const modelValue = (config[modelName] as Record<string, any>)?.model;
+                (config[modelName] as Record<string, any>)[modelKey] = (parser as any)(value, { model: modelValue });
+            } else {
+                (config[modelName] as Record<string, any>)[modelKey] = (parser as any)(value);
+            }
             continue;
         }
 

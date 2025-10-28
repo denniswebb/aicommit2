@@ -8,7 +8,7 @@ export default testSuite(({ describe }) => {
             test('throws error for application mode without API key', async () => {
                 const params = {
                     config: {
-                        model: 'anthropic.claude-3-5-haiku-20241022-v1:0',
+                        model: 'anthropic.claude-haiku-4-5-20251001-v1:0',
                         runtimeMode: 'application',
                         region: 'us-east-1',
                         key: '', // Empty key
@@ -33,7 +33,7 @@ export default testSuite(({ describe }) => {
             test('throws error for foundation mode without region', async () => {
                 const params = {
                     config: {
-                        model: 'anthropic.claude-3-5-haiku-20241022-v1:0',
+                        model: 'anthropic.claude-haiku-4-5-20251001-v1:0',
                         runtimeMode: 'foundation',
                         region: '', // Empty region
                         key: '',
@@ -61,15 +61,19 @@ export default testSuite(({ describe }) => {
                     expect(() => new BedrockService(params as any)).toThrow('AWS region is required to use Bedrock foundation models');
                 } finally {
                     // Restore environment variables
-                    if (savedRegion !== undefined) {process.env.AWS_REGION = savedRegion;}
-                    if (savedDefaultRegion !== undefined) {process.env.AWS_DEFAULT_REGION = savedDefaultRegion;}
+                    if (savedRegion !== undefined) {
+                        process.env.AWS_REGION = savedRegion;
+                    }
+                    if (savedDefaultRegion !== undefined) {
+                        process.env.AWS_DEFAULT_REGION = savedDefaultRegion;
+                    }
                 }
             });
 
             test('throws error for application mode without endpoint configuration', async () => {
                 const params = {
                     config: {
-                        model: 'anthropic.claude-3-5-haiku-20241022-v1:0',
+                        model: 'anthropic.claude-haiku-4-5-20251001-v1:0',
                         runtimeMode: 'application',
                         region: '', // No region
                         key: 'test-api-key',
@@ -99,15 +103,19 @@ export default testSuite(({ describe }) => {
                     expect(() => new BedrockService(params as any)).toThrow('Application mode requires applicationBaseUrl or region');
                 } finally {
                     // Restore environment variables
-                    if (savedRegion !== undefined) {process.env.AWS_REGION = savedRegion;}
-                    if (savedDefaultRegion !== undefined) {process.env.AWS_DEFAULT_REGION = savedDefaultRegion;}
+                    if (savedRegion !== undefined) {
+                        process.env.AWS_REGION = savedRegion;
+                    }
+                    if (savedDefaultRegion !== undefined) {
+                        process.env.AWS_DEFAULT_REGION = savedDefaultRegion;
+                    }
                 }
             });
 
             test('successfully constructs with valid foundation mode config', async () => {
                 const params = {
                     config: {
-                        model: 'anthropic.claude-3-5-haiku-20241022-v1:0',
+                        model: 'anthropic.claude-haiku-4-5-20251001-v1:0',
                         runtimeMode: 'foundation',
                         region: 'us-west-2',
                         key: '',
@@ -133,7 +141,7 @@ export default testSuite(({ describe }) => {
             test('successfully constructs with valid application mode config', async () => {
                 const params = {
                     config: {
-                        model: 'anthropic.claude-3-5-haiku-20241022-v1:0',
+                        model: 'anthropic.claude-haiku-4-5-20251001-v1:0',
                         runtimeMode: 'application',
                         region: 'us-east-1',
                         key: 'test-api-key',

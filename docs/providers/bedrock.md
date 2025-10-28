@@ -12,11 +12,12 @@
 ### IAM (Foundation Model Runtime)
 
 ```sh
-aicommit2 config set BEDROCK.model="anthropic.claude-3-5-haiku-20241022-v1:0" \
-    BEDROCK.runtimeMode=foundation \
+aicommit2 config set BEDROCK.model="anthropic.claude-haiku-4-5-20251001-v1:0" \
     BEDROCK.region="us-west-2" \
     BEDROCK.codeReview=true
 ```
+
+**Note**: The `runtimeMode` parameter is optional and will automatically default to `foundation` for standard model IDs.
 
 Set the following environment variables (or use your existing AWS profile):
 
@@ -32,15 +33,16 @@ aicommit2 config set BEDROCK.profile=your-profile
 
 ### Application Endpoint Runtime (Application Inference Profiles)
 
-For Application Inference Profiles, use the simplified configuration with just region and API key:
+For Application Inference Profiles, the configuration automatically detects the runtime mode from the model ARN:
 
 ```sh
-aicommit2 config set BEDROCK.runtimeMode=application \
-    BEDROCK.model="arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123" \
+aicommit2 config set BEDROCK.model="arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123" \
     BEDROCK.region="us-east-1" \
     BEDROCK.key="your-api-key" \
     BEDROCK.codeReview=true
 ```
+
+**Note**: When the model contains `application-inference-profile` in the ARN, `runtimeMode` automatically defaults to `application`. You can still explicitly set `BEDROCK.runtimeMode=application` if desired.
 
 Or set the API key via environment variable:
 
@@ -53,12 +55,14 @@ export BEDROCK_APPLICATION_API_KEY="your-application-api-key"
 For custom application endpoints, specify the base URL and endpoint ID:
 
 ```sh
-aicommit2 config set BEDROCK.runtimeMode=application \
-    BEDROCK.model="anthropic.claude-3-5-haiku-20241022-v1:0" \
+aicommit2 config set BEDROCK.model="anthropic.claude-haiku-4-5-20251001-v1:0" \
+    BEDROCK.runtimeMode=application \
     BEDROCK.applicationBaseUrl="https://bedrock-runtime.us-west-2.amazonaws.com/application-inference" \
     BEDROCK.applicationEndpointId="your-endpoint-id" \
     BEDROCK.codeReview=true
 ```
+
+**Note**: For custom endpoints (not using Application Inference Profile ARNs), you should explicitly set `runtimeMode=application`.
 
 Set the application API key:
 
@@ -72,8 +76,8 @@ export BEDROCK_APPLICATION_INFERENCE_PROFILE_ARN="arn:aws:bedrock:..."
 
 | Setting                                 | Description                                                                                           | Default                                        |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `model`                                 | Bedrock model identifier (foundation or application)                                                  | `anthropic.claude-3-5-haiku-20241022-v1:0`     |
-| `runtimeMode`                           | `foundation` for the Bedrock runtime or `application` for application inference endpoints             | `foundation`                                   |
+| `model`                                 | Bedrock model identifier (foundation or application)                                                  | `anthropic.claude-haiku-4-5-20251001-v1:0`     |
+| `runtimeMode`                           | `foundation` for the Bedrock runtime or `application` for application inference endpoints. **Optional**: Auto-detects from model string (detects `application` if model contains `application-inference-profile`, otherwise defaults to `foundation`) | Auto-detected (default: `foundation`)          |
 | `key`                                   | API key for application endpoints (falls back to environment variables)                               | –                                              |
 | `envKey`                                | Environment variable name that holds the API key                                                      | `BEDROCK_API_KEY` (also checks application key) |
 | `region`                                | AWS region for IAM authentication                                                                     | `AWS_REGION`/`AWS_DEFAULT_REGION` if available |
@@ -103,34 +107,46 @@ Use `BEDROCK.envKey` if you prefer to point to a custom environment variable for
 
 Amazon Bedrock supports various foundation models from different providers:
 
-### Anthropic Claude Models
-- `anthropic.claude-3-5-sonnet-20241022-v2:0` - Claude 3.5 Sonnet (most capable)
-- `anthropic.claude-3-5-haiku-20241022-v1:0` - Claude 3.5 Haiku (fastest)
-- `anthropic.claude-3-opus-20240229-v1:0` - Claude 3 Opus
+### Anthropic Claude Models (Latest)
+- `anthropic.claude-sonnet-4-5-20250929-v1:0` - Claude Sonnet 4.5 (most intelligent, best for coding and complex agents)
+- `anthropic.claude-haiku-4-5-20251001-v1:0` - Claude Haiku 4.5 (near-frontier performance at lower cost)
+- `anthropic.claude-opus-4-1-20250805-v1:0` - Claude Opus 4.1
+- `anthropic.claude-3-7-sonnet-20250219-v1:0` - Claude 3.7 Sonnet
 
-### Meta Llama Models
+### Meta Llama Models (Latest)
+- `meta.llama4-scout-17b-instruct-v1:0` - Llama 4 Scout 17B
+- `meta.llama4-maverick-17b-instruct-v1:0` - Llama 4 Maverick 17B
 - `meta.llama3-3-70b-instruct-v1:0` - Llama 3.3 70B
-- `meta.llama3-1-8b-instruct-v1:0` - Llama 3.1 8B
+- `meta.llama3-2-90b-instruct-v1:0` - Llama 3.2 90B
 
-### Amazon Titan Models
-- `amazon.titan-text-premier-v1:0` - Titan Text Premier
-- `amazon.titan-text-express-v1` - Titan Text Express
+### Amazon Nova Models (Latest)
+- `amazon.nova-premier-v1:0` - Nova Premier (most capable)
+- `amazon.nova-pro-v1:0` - Nova Pro (balanced performance)
+- `amazon.nova-sonic-v1:0` - Nova Sonic (with speech input/output)
+- `amazon.nova-reel-v1:1` - Nova Reel (video generation)
 
 ### Mistral AI Models
-- `mistral.mistral-large-2407-v1:0` - Mistral Large
-- `mistral.mistral-small-2402-v1:0` - Mistral Small
+- `mistral.pixtral-large-2502-v1:0` - Pixtral Large (multimodal)
+- `mistral.mistral-large-2407-v1:0` - Mistral Large 24.07
+
+### Other Providers
+- `deepseek.r1-v1:0` - DeepSeek-R1
+- `qwen.qwen3-235b-a22b-2507-v1:0` - Qwen3 235B
 
 For the complete list of available models, visit the [AWS Bedrock Model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/model-ids.html).
 
 ## Tips
 
-- Set `BEDROCK.runtimeMode=foundation` when you rely on IAM credentials or AWS profiles. The CLI automatically checks IAM-related environment variables and does not require an API key when they are present.
-- Switch to `BEDROCK.runtimeMode=application` for Bedrock Application Inference Profiles or custom application endpoints:
-  - For Application Inference Profiles: Just set the model ARN, region, and API key (no additional endpoint configuration needed)
-  - For custom endpoints: Provide an application API key and either a base URL or endpoint/inference profile identifiers
+- **Auto-detection**: The `runtimeMode` is now optional and automatically detected:
+  - Models containing `application-inference-profile` in the ARN automatically use `application` mode
+  - Standard model IDs (e.g., `anthropic.claude-haiku-4-5-20251001-v1:0`) automatically use `foundation` mode
+  - You can still explicitly set `BEDROCK.runtimeMode` if needed
+- **Foundation mode** relies on IAM credentials or AWS profiles. The CLI automatically checks IAM-related environment variables and does not require an API key when they are present.
+- **Application mode** configuration:
+  - For Application Inference Profiles: Just set the model ARN (e.g., `arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123`), region, and API key
+  - For custom endpoints: Provide an application API key and either a base URL or endpoint/inference profile identifiers, and explicitly set `runtimeMode=application`
 - The CLI logs every request/response via `~/.local/state/aicommit2/logs` when `logging=true` to help diagnose AWS-specific errors.
 - Combine multiple Bedrock models by comma separating `BEDROCK.model` values.
-- When using Application Inference Profiles, use the full ARN as the model ID (e.g., `arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123`)
 
 ## Troubleshooting
 
@@ -166,7 +182,7 @@ For the complete list of available models, visit the [AWS Bedrock Model IDs docu
 **Problem**: `ResourceNotFoundException` - Model not found
 
 **Solution**:
-- Verify the model ID is correct and properly formatted (e.g., `anthropic.claude-3-5-haiku-20241022-v1:0`)
+- Verify the model ID is correct and properly formatted (e.g., `anthropic.claude-haiku-4-5-20251001-v1:0`)
 - Ensure the model is available in your selected region: not all models are available in all regions
 - Check [AWS Bedrock regions](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-regions.html) for model availability
 - Enable model access in the AWS Bedrock console under "Model access"

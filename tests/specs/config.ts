@@ -497,6 +497,83 @@ export default testSuite(({ describe }) => {
                 await fixture.rm();
                 restoreEnv(snapshot);
             });
+
+            await test('auto-detects application mode from application-inference-profile ARN', async () => {
+                const { fixture } = await createFixture();
+                const configPath = path.join(fixture.path, '.config', 'aicommit2', 'config.ini');
+                await ensureDirectoryExists(path.dirname(configPath));
+                await fs.writeFile(
+                    configPath,
+                    [
+                        '[BEDROCK]',
+                        'model=arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123',
+                        'region=us-east-1',
+                        '',
+                    ].join('\n')
+                );
+
+                const snapshot = snapshotEnv(envKeys);
+
+                process.env.AICOMMIT_CONFIG_PATH = configPath;
+                process.env.BEDROCK_APPLICATION_API_KEY = 'test-api-key';
+
+                const config = (await getConfig({}, [])) as ValidConfig;
+                const bedrock = config.BEDROCK as any;
+
+                expect(bedrock.runtimeMode).toBe('application');
+
+                await fixture.rm();
+                restoreEnv(snapshot);
+            });
+
+            await test('defaults to foundation mode for standard model IDs', async () => {
+                const { fixture } = await createFixture();
+                const configPath = path.join(fixture.path, '.config', 'aicommit2', 'config.ini');
+                await ensureDirectoryExists(path.dirname(configPath));
+                await fs.writeFile(
+                    configPath,
+                    ['[BEDROCK]', 'model=anthropic.claude-haiku-4-5-20251001-v1:0', 'region=us-west-2', ''].join('\n')
+                );
+
+                const snapshot = snapshotEnv(envKeys);
+
+                process.env.AICOMMIT_CONFIG_PATH = configPath;
+                process.env.AWS_ACCESS_KEY_ID = 'AKIA_TEST';
+                process.env.AWS_SECRET_ACCESS_KEY = 'SECRET_TEST';
+
+                const config = (await getConfig({}, [])) as ValidConfig;
+                const bedrock = config.BEDROCK as any;
+
+                expect(bedrock.runtimeMode).toBe('foundation');
+
+                await fixture.rm();
+                restoreEnv(snapshot);
+            });
+
+            await test('explicit runtimeMode overrides auto-detection', async () => {
+                const { fixture } = await createFixture();
+                const configPath = path.join(fixture.path, '.config', 'aicommit2', 'config.ini');
+                await ensureDirectoryExists(path.dirname(configPath));
+                await fs.writeFile(
+                    configPath,
+                    ['[BEDROCK]', 'model=anthropic.claude-haiku-4-5-20251001-v1:0', 'runtimeMode=application', 'region=us-east-1', ''].join(
+                        '\n'
+                    )
+                );
+
+                const snapshot = snapshotEnv(envKeys);
+
+                process.env.AICOMMIT_CONFIG_PATH = configPath;
+                process.env.BEDROCK_APPLICATION_API_KEY = 'test-api-key';
+
+                const config = (await getConfig({}, [])) as ValidConfig;
+                const bedrock = config.BEDROCK as any;
+
+                expect(bedrock.runtimeMode).toBe('application');
+
+                await fixture.rm();
+                restoreEnv(snapshot);
+            });
         });
     });
 });
